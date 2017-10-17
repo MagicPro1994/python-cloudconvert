@@ -2,7 +2,40 @@
 
 import { commands, window, workspace, ExtensionContext, Position, Range, Selection, TextDocument } from 'vscode';
 import * as vscode from 'vscode';
-let dirtyCounter = 0;
+
+class InputHandler {
+    public static eventLocks = 0;
+    public static actionLock = false;
+    private _insertString : string = "";
+    private _insertStartIndex : number = 0;
+    private _insertEndIndex : number = 0;
+    get InsertString() : string {
+        return this._insertString;
+    }
+    set InsertString(str : string) {
+        this._insertString = str;
+    }
+    get StartIndex() : number {
+        return this._insertStartIndex;
+    }
+    set StartIndex(num : number) {
+        this._insertStartIndex = num;
+    }
+    get EndIndex() : number {
+        return this._insertEndIndex;
+    }
+    set EndIndex(num : number) {
+        this._insertEndIndex = num;
+    }
+    /**
+     * name
+     */
+    public constructor (oldString : string, newString : string, length) {
+        this._insertStartIndex = getHeadIndex(oldString, newString);
+        this._insertEndIndex = this._insertStartIndex + length;
+        this._insertString = newString.substring(this._insertStartIndex, this._insertEndIndex);
+    }
+}
 
 export function activate(context: ExtensionContext) {
     context.subscriptions.push(commands.registerCommand('markdown.extension.onEnterKey', onEnterKey));
@@ -20,6 +53,34 @@ function isInFencedCodeBlock(doc: TextDocument, lineNum: number): boolean {
     } else {
         return matches.length % 2 != 0;
     }
+}
+
+function moveCursorInLine(value: number) {
+    commands.executeCommand('cursorMove', {to: 'wrappedLineStart'});
+    commands.executeCommand('cursorMove', {to: 'right', value: value});
+}
+
+function getHeadIndex(oldString: string, newString: string) : number {
+    return 0;
+}
+
+function getTailIndex(oldString: string, newString: string) : number {
+    
+    return 0;
+}
+
+function getInsertString(oldString: string, newString: string) : Object {
+    let startIndex = getHeadIndex(oldString, newString);
+    let endIndex = getTailIndex(oldString, newString);
+    return newString.substring(startIndex, endIndex);
+}
+
+async function getLengthChange(doc: TextDocument, lineNum: number) {
+    let oldText = doc.lineAt(lineNum).text
+    let beforeLen = doc.lineAt(lineNum).text.length;
+    await commands.executeCommand('cursorMove', {to: 'left', value: 1});
+    await commands.executeCommand('cursorMove', {to: 'right', value: 1});
+    return (doc.lineAt(lineNum).text.length - beforeLen);
 }
 
 async function onEnterKey(modifiers?: string) {
@@ -100,7 +161,7 @@ async function onTabKey() {
     let editor = window.activeTextEditor;
     let cursorPos = editor.selection.active;
     let textBeforeCursor = editor.document.lineAt(cursorPos.line).text.substr(0, cursorPos.character);
-
+    
     if (isInFencedCodeBlock(editor.document, cursorPos.line)) {
         // Normal behavior
         return commands.executeCommand('tab');
@@ -116,10 +177,10 @@ async function onTabKey() {
 
 async function onBackspaceKey() {
     let editor = window.activeTextEditor;
-    let editDocument = editor.document;
     let cursorPos = editor.selection.active;
+    let editDocument = editor.document;
     let textBeforeCursor = editDocument.lineAt(cursorPos.line).text.substr(0, cursorPos.character);
-
+ 
     if (isInFencedCodeBlock(editDocument, cursorPos.line)) {
         // Normal behavior
         return commands.executeCommand('deleteLeft');
@@ -127,36 +188,27 @@ async function onBackspaceKey() {
 
     if (/^\s+([-+*]|[0-9]+[.)]) $/.test(textBeforeCursor)) {
         return commands.executeCommand('editor.action.outdentLines');
-    }
-
-    if (/^([-+*]|[0-9]+[.)]) $/.test(textBeforeCursor)) {
-        return await editor.edit(editBuilder => {
-            editBuilder.delete(new Range(
-                cursorPos.with({ character: 0 }),
-                cursorPos));
+    } else if (/^([-+*]|[0-9]+[.)]) $/.test(textBeforeCursor)) {
+        await editor.edit(editBuilder => {
+            editBuilder.delete(new Range(cursorPos.with({ character: 0 }), cursorPos));
         });
-    }
-    await editor.edit(editBuilder => {
-        editBuilder.delete(new Range(
-            cursorPos.with({ character: 0 }),
-            cursorPos));
-    });
-    let beforeIndex = cursorPos.character - 1;
-    if(beforeIndex > 0) {
-        if(editDocument.isDirty) {
-            dirtyCounter++;
-            console.log(dirtyCounter);
-            commands.executeCommand('cursorMove', {to: 'wrappedLineStart'});
-            commands.executeCommand('cursorMove', {to: 'right', value: beforeIndex + dirtyCounter});
-            commands.executeCommand('deleteLeft');
-            commands.executeCommand('cursorMove', {to: 'wrappedLineStart'});
-            commands.executeCommand('cursorMove', {to: 'right', value: cursorPos.character});
-            return;
+    } else {
+        if(InputHandler.eventLocks == 0) {
+            await getLengthChange(editDocument, cursorPos.line).then(len => {
+                InputHandler.eventLocks = len;
+                console.log(len);
+                InputHandler.eventLocks--;
+            });
+        } else {
+            InputHandler.eventLocks--;
         }
-    }
-    // Normal behavior
-    return commands.executeCommand('deleteLeft');
+        //console.log(InputHandler.eventLocks);
+        //console.log(InputHandler.eventLocks);
+        // Normal behavior
+        //return commands.executeCommand('deleteLeft');
+    }    
 }
+
 
 function checkTaskList() {
     let editor = window.activeTextEditor;
